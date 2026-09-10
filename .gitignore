@@ -1,0 +1,65 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments and packaging
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+build/
+dist/
+*.spec
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config.json
+!config.example.json
+*.pem
+*.key
+
+# Runtime data, caches, logs, and generated reviews
+/data/
+/outputs/
+cache.json
+*.log
+
+# User-specific writing data
+/style_presets/*.json
+glossary.json
+
+# Generated/converted test books not used by the automated tests
+/bookreview/tests/sample_books/*.mobi
+/bookreview/tests/sample_books/*.azw3
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local AI coding tools
+.codebuddy/
+.claude/
+
+# Local branding files
+*.jpg
+logo.png
+logo.ico
