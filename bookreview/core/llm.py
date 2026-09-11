@@ -111,22 +111,48 @@ class LLMClient:
 
     def stream(self, system: str, user: str, temperature: float | None = None,
                max_tokens: int | None = None, model: str | None = None) -> Iterator[str]:
-        """流式输出，供 GUI 实时渲染。"""
+        """流式输出；尚未产生内容时对限流/网络错误进行重试。"""
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        resp = self._client.chat.completions.create(
-            model=model or self.model,
-            messages=messages,
-            temperature=self.temperature if temperature is None else temperature,
-            max_tokens=self._budget(
-                self.max_tokens if max_tokens is None else max_tokens
-            ),
-            stream=True,
-        )
-        for chunk in resp:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                yield delta
-
+        kwargs = {
+            "model": model or self.model,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else temperature,
+            "max_tokens": self._budget(self.max_tokens if max_tokens is None else max_tokens),
+            "stream": True,
+        }
+        last_err: Exception | None = None
+        emitted = False
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = self._client.chat.completions.create(**kwargs)
+                finish_reason = None
+                for chunk in resp:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    finish_reason = choice.finish_reason or finish_reason
+                    delta = choice.delta.content
+                    if delta:
+                        emitted = True
+                        yield delta
+                if finish_reason == "length":
+                    raise LLMError("流式输出被截断，请调大 max_tokens 或 reasoning_reserve。")
+                return
+            except RateLimitError as e:
+                last_err = e
+                if emitted:
+                    raise LLMError(f"流式输出中断（限流）: {e}") from e
+                time.sleep(min(2 ** attempt * 3, 60))
+            except (APIConnectionError, APITimeoutError) as e:
+                last_err = e
+                if emitted:
+                    raise LLMError(f"流式输出中断（网络错误）: {e}") from e
+                time.sleep(min(2 ** attempt, 20))
+            except LLMError:
+                raise
+            except Exception as e:
+                raise LLMError(f"流式模型调用失败: {type(e).__name__}: {e}") from e
+        raise LLMError(f"流式模型调用重试 {self.max_retries} 次仍失败: {last_err}")
     # ---------- 自检 ----------
     def ping(self) -> tuple[bool, str]:
         try:
