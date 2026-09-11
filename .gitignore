@@ -32,6 +32,7 @@ config.json
 # Runtime data, caches, logs, and generated reviews
 /data/
 /outputs/
+/_tmp_testdata/
 cache.json
 *.log
 

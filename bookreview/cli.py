@@ -112,6 +112,24 @@ def cmd_import_profile(args, pipe: Pipeline) -> int:
 
 
 def cmd_profiles(args, pipe: Pipeline) -> int:
+    if args.clean:
+        plan = pipe.db.plan_dedupe_profiles()
+        if not plan:
+            print("没有发现重复风格画像。")
+            return 0
+        remove_count = sum(len(group["remove"]) for group in plan)
+        for group in plan:
+            print(f"  保留 #{group['keep']}，删除: " + ", ".join(
+                f"#{item['id']} {item['name']}" for item in group["remove"]
+            ))
+        if not args.yes:
+            answer = input(f"确认删除 {remove_count} 张重复风格画像？[y/N] ").strip().lower()
+            if answer not in {"y", "yes"}:
+                print("已取消。")
+                return 0
+        deleted = pipe.db.apply_dedupe_profiles(plan)
+        print(f"已清理 {deleted} 张重复风格画像。")
+        return 0
     rows = pipe.list_profiles()
     if not rows:
         print("还没有风格画像。用 `style` 命令创建。")
