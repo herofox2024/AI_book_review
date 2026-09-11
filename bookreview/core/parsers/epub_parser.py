@@ -1,4 +1,4 @@
-"""EPUB 解析：按 spine 阅读顺序提取正文文档。"""
+"""EPUB 瑙ｆ瀽锛氭寜 spine 闃呰椤哄簭鎻愬彇姝ｆ枃鏂囨。銆?""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from ebooklib import epub
 from .base import BaseParser
 from ..models import Book
 
-# 明显不是正文的文档名
+# 鏄庢樉涓嶆槸姝ｆ枃鐨勬枃妗ｅ悕
 SKIP_NAME_HINTS = ("nav", "toc", "cover", "titlepage", "copyright", "frontmatter")
 
 
@@ -20,7 +20,7 @@ def _html_to_blocks(html: bytes, chapter_hint: str) -> tuple[str, str]:
     for tag in soup(["script", "style", "nav"]):
         tag.decompose()
 
-    # 章节标题：优先 h1/h2/h3，其次 title
+    # 绔犺妭鏍囬锛氫紭鍏?h1/h2/h3锛屽叾娆?title
     heading = chapter_hint
     for tag_name in ("h1", "h2", "h3"):
         h = soup.find(tag_name)
@@ -41,7 +41,7 @@ class EpubParser(BaseParser):
         try:
             book = epub.read_epub(str(path))
         except Exception as e:
-            raise RuntimeError(f"无法读取 epub: {e}") from e
+            raise RuntimeError(f"鏃犳硶璇诲彇 epub: {e}") from e
 
         def first_meta(ns: str, tag: str) -> str:
             try:
@@ -57,21 +57,25 @@ class EpubParser(BaseParser):
         language = first_meta("DC", "language")
 
         blocks: list[tuple[str, str]] = []
-        for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-            name = (item.file_name or "").lower()
-            if any(h in name for h in SKIP_NAME_HINTS):
-                continue
-                # 封面/目录页通常无正文，但仍尝试提取，短块会被 build_book 丢弃
-                pass
-            try:
-                content = item.get_content()
-            except Exception:
-                continue
-            heading, body = _html_to_blocks(content, item.file_name or "")
-            if len(body.strip()) >= 80:
-                blocks.append((heading, body))
-
+        # EPUB 的 spine 才是阅读顺序；manifest 顺序可能导致章节错乱。
+        $ordered = @()
+        $seen_ids = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($entry in @($book.spine)) {
+            $idref = if ($entry -is [array]) { $entry[0] } else { $entry }
+            $item = $book.get_item_with_id($idref)
+            if ($null -ne $item) { $ordered += $item; [void]$seen_ids.Add($item.id) }
+        }
+        foreach ($item in $book.get_items_of_type(ebooklib.ITEM_DOCUMENT)) {
+            if (-not $seen_ids.Contains($item.id)) { $ordered += $item }
+        }
+        foreach ($item in $ordered) {
+            $name = ($item.file_name or "").ToLower()
+            if (any($h in $name for $h in SKIP_NAME_HINTS)) { continue }
+            try { $content = $item.get_content() } catch { continue }
+            $heading, $body = _html_to_blocks($content, $item.file_name or "")
+            if ($body.Trim().Length -ge 80) { $blocks += ,($heading, $body) }
+        }
         if not blocks:
-            raise RuntimeError("epub 中未找到正文文档")
+            raise RuntimeError("epub 涓湭鎵惧埌姝ｆ枃鏂囨。")
 
         return self.build_book(path, title, author, "epub", blocks, language=language)
