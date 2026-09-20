@@ -156,7 +156,14 @@ class LLMClient:
     # ---------- 自检 ----------
     def ping(self) -> tuple[bool, str]:
         try:
-            r = self.chat("你是一个测试助手。", "只回复两个字：正常", max_tokens=16)
+            # Reasoning models may spend most of a tiny budget on their thought
+            # chain before producing the short connection-test response.
+            r = self.chat(
+                "你是一个测试助手。",
+                "只回复两个字：正常",
+                temperature=0,
+                max_tokens=256,
+            )
             return True, r[:50]
         except Exception as e:
             return False, str(e)
