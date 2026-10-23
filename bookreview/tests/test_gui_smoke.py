@@ -82,9 +82,30 @@ def test_gui_smoke() -> None:
         win.close()
 
 
+def test_dialog_background_is_opaque() -> None:
+    """回归：玻璃主题的窗口底色是 transparent，对话框若共用它会被画成纯黑。
+
+    QMessageBox / QInputDialog 这类顶层窗口没有半透明表面，
+    必须给它们一个不透明的 dialog_bg。
+    """
+    from bookreview.ui.theme import build_qss, resolve_theme
+
+    for key in ("crystal", "system", "dark"):
+        theme = resolve_theme(key)
+        bg = theme.dialog_bg.strip().lower()
+        assert bg and bg != "transparent", f"{key}: 对话框底色不能是 transparent"
+        if bg.startswith("rgba"):
+            raise AssertionError(f"{key}: 对话框底色必须是实色，不支持 rgba 透明度")
+        qss = build_qss(theme)
+        assert f"background: {theme.dialog_bg}" in qss, f"{key}: QSS 未使用 dialog_bg"
+        assert "QDialog" in qss and "QMessageBox" in qss, f"{key}: 缺少对话框样式选择器"
+    print("  [OK] 三套主题的对话框底色都是实色")
+
+
 def main() -> int:
     test_gui_smoke()
-    print("GUI 冒烟测试通过（6 项）")
+    test_dialog_background_is_opaque()
+    print("GUI 冒烟测试通过（7 项）")
     return 0
 
 

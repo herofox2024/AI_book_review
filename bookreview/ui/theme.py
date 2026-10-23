@@ -48,6 +48,10 @@ class Theme:
     success: str
     warn: str
     scroll: str = "#C9CFD8"
+    # 对话框底色：必须是**不透明**颜色。
+    # 主窗口在玻璃主题下用 transparent 露出系统毛玻璃，但 QMessageBox /
+    # QInputDialog 这类顶层窗口没有开半透明表面，透明色会被渲染成纯黑。
+    dialog_bg: str = "#F5F6F8"
 
     radius: int = 9
     radius_lg: int = 16
@@ -78,6 +82,7 @@ CRYSTAL = Theme(
     success="#30A46C",
     warn="#F5A524",
     scroll="rgba(58, 70, 88, 0.32)",
+    dialog_bg="#F3F5F9",
 )
 
 # ---------- 2a) 跟随系统（浅色）----------
@@ -131,6 +136,7 @@ DARK = Theme(
     success="#4CC38A",
     warn="#E8A33D",
     scroll="#3C434D",
+    dialog_bg="#23272E",
 )
 
 THEMES: dict[str, Theme] = {t.key: t for t in (CRYSTAL, LIGHT, DARK)}
@@ -176,8 +182,17 @@ QWidget {
 }
 
 /* ---------- 窗口 / 页面底 ---------- */
-QMainWindow, QDialog {
+QMainWindow {
     background: $win_bg;
+}
+/* 对话框必须用不透明底色：玻璃主题的 win_bg 是 transparent，
+   而 QMessageBox 等顶层窗口没有半透明表面，透明会被画成纯黑。 */
+QDialog, QMessageBox, QInputDialog, QFileDialog {
+    background: $dialog_bg;
+}
+QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel {
+    color: $text;
+    background: transparent;
 }
 QWidget#pageRoot, QWidget#central {
     background: transparent;
@@ -536,6 +551,7 @@ def build_qss(theme: Theme) -> str:
         font_family=FONT_FAMILY,
         mono_family=MONO_FAMILY,
         win_bg=theme.win_bg,
+        dialog_bg=theme.dialog_bg,
         sidebar_bg=theme.sidebar_bg,
         surface=theme.surface,
         surface_soft=theme.surface_soft,
