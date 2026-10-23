@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .models import normalize_style_profile
+
 SYSTEM_BASE = (
     "你是一位有独立判断力的资深读书人，写过大量书评。"
     "你的判断具体、有依据，既不捧杀也不为批评而批评。"
@@ -183,6 +185,7 @@ FOCUS_PRESETS = {
 
 def render_style_block(profile: dict | None) -> str:
     """把风格画像渲染成给模型读的自然语言块。"""
+    profile = normalize_style_profile(profile)
     if not profile:
         return (
             "# 我的写作风格\n"
@@ -302,35 +305,67 @@ DEFAULT_GENRE_SPOILER_KEYWORDS = [
 ]
 
 
+def _as_policy(value: object) -> str | None:
+    """把任意输入收敛成合法策略名；非法值返回 None，由上层继续往下兜底。"""
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    return v if v in SPOILER_RULES else None
+
+
 def _match_genre_policy(profile: dict | None, genre: str | None) -> str | None:
     """按书的题材匹配风格卡里的 spoiler_policy_by_genre 规则。"""
     if not genre or not profile:
         return None
     g = genre.lower()
     for rule in profile.get("spoiler_policy_by_genre") or []:
+        if not isinstance(rule, dict):
+            continue
         for kw in rule.get("keywords") or []:
             if str(kw).lower() in g:
                 return rule.get("policy")
     return None
 
 
+def _match_default_genre_policy(genre: str | None) -> str | None:
+    """兜底：书的题材命中推理/悬疑关键词时默认走 blur（防泄底）。
+
+    只用于「风格卡完全没给剧透策略」的情况 —— 不推翻作者显式选择的 full/partial，
+    否则等于强行改掉一个本来就习惯充分展开剧情的作者的风格。
+    """
+    if not genre:
+        return None
+    g = genre.lower()
+    if any(kw.lower() in g for kw in DEFAULT_GENRE_SPOILER_KEYWORDS):
+        return "blur"
+    return None
+
+
 def render_spoiler_rule(profile: dict | None, genre: str | None = None,
                         fallback: str = "none") -> str:
-    """渲染剧透规则：先按题材匹配，再退回风格卡的默认策略。"""
-    policy = (_match_genre_policy(profile, genre)
-              or (profile or {}).get("spoiler_policy")
-              or fallback)
-    if policy not in SPOILER_RULES:
-        policy = fallback if fallback in SPOILER_RULES else "none"
+    """渲染剧透规则。
+
+    优先级：风格卡按题材的显式规则 > 风格卡默认策略
+            > 推理/悬疑题材自动兜底（blur）> fallback。
+    """
+    profile = normalize_style_profile(profile)
+    policy = (
+        _as_policy(_match_genre_policy(profile, genre))
+        or _as_policy(profile.get("spoiler_policy"))
+        or _as_policy(_match_default_genre_policy(genre))
+        or _as_policy(fallback)
+        or "none"
+    )
     rule = SPOILER_RULES[policy]
-    notes = (profile or {}).get("spoiler_blur_notes")
+    notes = profile.get("spoiler_blur_notes") or []
     if policy == "blur" and notes:
-        rule += "\n- 作者本人的补充要求：" + "；".join(str(n) for n in notes)
+        rule += "\n- 作者本人的补充要求：" + "；".join(notes)
     return rule
 
 
 def render_persona_line(profile: dict | None, author_name: str = "") -> str:
     """构造模型要扮演的人物设定。author_name 为空时避免出现"你是你"这种病句。"""
+    profile = normalize_style_profile(profile)
     if not profile:
         who = author_name if author_name and author_name != "你" else ""
         return f"你是{who}，一位有独立判断力的读书人。" if who else "你是一位有独立判断力的读书人。"

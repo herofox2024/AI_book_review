@@ -12,13 +12,16 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.models import Book, BookDigest
+from ...core.parsers.base import SUPPORTED_EXTS
 from ...core.pipeline import Pipeline
 from ...core.prompts import FOCUS_PRESETS, LENGTH_PRESETS
 from ..workers import DigestWorker, GenerateWorker, ParseWorker
 from ..parameter_help import ParameterHelp
 
+# 只列出解析器真正支持的扩展名：列了 .txt/.md 却解析不了，
+# 用户选中后会直接撞上「不支持的格式」。
 FILE_FILTER = (
-    "电子书 (*.epub *.mobi *.azw3 *.docx *.txt *.md);;"
+    "电子书 (*.epub *.mobi *.azw3 *.docx);;"
     "EPUB (*.epub);;Kindle (*.mobi *.azw3);;Word (*.docx);;全部文件 (*.*)"
 )
 
@@ -33,6 +36,9 @@ class GeneratePage(QWidget):
         self._digest_w: DigestWorker | None = None
         self._gen_w: GenerateWorker | None = None
         self.help = ParameterHelp(self)
+        # QWidget 默认不接收拖放，不打开这个开关时 dragEnterEvent/dropEvent
+        # 永远不会被调用（界面上的拖放功能等于不存在）。
+        self.setAcceptDrops(True)
         self._build_ui()
         self._refresh_profiles()
 
@@ -210,8 +216,14 @@ class GeneratePage(QWidget):
         self.btn_digest.setEnabled(False)
         self.chk_force.setEnabled(False)
         self.btn_gen.setEnabled(False)
+        # 连 book 一起清空：否则解析新书失败/未完成时，
+        # 界面显示的是新书名，按钮却能对上一本书构建理解卡。
+        self.book = None
         self.digest = None
         self.txt_digest.clear()
+        self.lbl_digest_state.setText("")
+        self.lbl_digest_state.setObjectName("muted")
+        self.lbl_digest_state.setStyleSheet("")
         self._parse_w = ParseWorker(self.pipe, path)
         self._parse_w.done.connect(self._on_parsed)
         self._parse_w.failed.connect(self._on_error)
@@ -353,13 +365,31 @@ class GeneratePage(QWidget):
         self.lbl_digest_state.setToolTip(msg)
         QMessageBox.warning(self, "出错了", msg)
 
+    def _supported_paths(self, e) -> list[str]:
+        """从拖放事件里挑出受支持的本地文件。"""
+        if not e.mimeData().hasUrls():
+            return []
+        out: list[str] = []
+        for u in e.mimeData().urls():
+            path = u.toLocalFile()
+            if path and Path(path).suffix.lower() in SUPPORTED_EXTS:
+                out.append(path)
+        return out
+
     def dragEnterEvent(self, e):  # noqa: N802
-        if e.mimeData().hasUrls():
+        if self._supported_paths(e):
             e.acceptProposedAction()
+        else:
+            # 不接受不支持的文件，避免松手后一律报"不支持的格式"
+            e.ignore()
 
     def dropEvent(self, e):  # noqa: N802
-        urls = e.mimeData().urls()
-        if urls:
-            path = urls[0].toLocalFile()
-            if path:
-                self._load(path)
+        paths = self._supported_paths(e)
+        if paths:
+            e.acceptProposedAction()
+            self._load(paths[0])
+            return
+        supported = " / ".join(sorted(x.lstrip(".") for x in SUPPORTED_EXTS))
+        QMessageBox.information(
+            self, "不支持的文件", f"拖进来的文件格式无法解析。\n当前支持：{supported}"
+        )

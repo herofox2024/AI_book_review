@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -130,7 +131,8 @@ def test_style_learning():
     print(f"  [OK] 统计特征：篇均 {stats['avg_review_chars']} 字，"
           f"句均 {stats['avg_sentence_len']} 字，短句占比 {stats['short_sentence_ratio']}")
 
-    tmp = Path(__file__).parent / "_tmp_samples.txt"
+    # 样本文件写到测试专用临时目录，不要污染源码树
+    tmp = TEST_DATA_DIR / "_tmp_samples.txt"
     tmp.write_text("\n\n---\n\n".join(samples), encoding="utf-8")
     pid, profile = pipe.learn_style([tmp], name="测试风格")
     assert pid > 0
@@ -354,6 +356,146 @@ def test_prompt_quality_guards():
     print(f"  [OK] 长度档 {len(LENGTH_PRESETS)} 种 / 侧重 {len(FOCUS_PRESETS)} 种")
 
 
+def test_sanitizer_instruction_line_shift():
+    """回归：删掉首行指令后，drop 里的下标不能整体偏移一位（否则误删原文）。"""
+    text = (
+        "请把下面这篇文章润色下\n"
+        + "这是第一段正文。" * 5
+        + "\n#User：改写成小红书\n"
+        + "这是本人原文第二段。" * 3
+    )
+    cleaned, _ = sanitize(text)
+    assert "这是本人原文第二段" in cleaned, "指令行之后的本人原文被误删"
+    assert "改写成小红书" not in cleaned, "指令行本身未被剔除"
+    print(f"  [OK] 首行指令 + #User 之后的原文完整保留（{len(cleaned)} 字）")
+
+
+def test_sanitizer_rating_line_not_truncated():
+    """回归：'豆瓣：8.7 分' 这类评分句不能被当成 AI 渠道版本而截断全文。"""
+    text = "这本书我给四星。" * 10 + "\n豆瓣：8.7 分\n我还是觉得值得一读。"
+    cleaned, notes = sanitize(text)
+    assert "我还是觉得值得一读" in cleaned, "评分行之后的内容被误截断"
+    assert not notes, f"评分行被误判为 AI 标记: {notes}"
+
+    # 真正的渠道版本标记仍然必须截断
+    ch = "这本书一般。" * 10 + "\n公众号：\n宝子们绝了！"
+    cleaned2, _ = sanitize(ch)
+    assert "宝子们" not in cleaned2, "渠道版本标记未生效"
+    print("  [OK] 评分句保留 / 渠道版本标记仍截断")
+
+
+def test_chunker_no_overlap_shell():
+    """回归：重叠尾巴不能单独成块（否则产出 chapter='' 的重复空壳块）。"""
+    from bookreview.core.models import Book, Chapter
+
+    book = Book(title="T", author="A", fmt="epub", source_path="x")
+    book.chapters = [
+        Chapter(index=1, title="第一章", text="A" * 800),
+        Chapter(index=2, title="第二章",
+                text="\n".join("段落%02d" % i + "x" * 200 for i in range(18))),
+        Chapter(index=3, title="第三章", text="C" * 500),
+    ]
+    chunks = chunk_book(book, chunk_size=1000, chunk_overlap=100)
+
+    assert all(len(c.text.strip()) > 100 for c in chunks), \
+        f"出现纯重叠空壳块: {[(c.index, len(c.text)) for c in chunks]}"
+    assert all(c.chapter for c in chunks), "出现无归属章节的块"
+    for c in chunks:
+        m = re.search(r"第(\d+)/(\d+)部分", c.position)
+        if m:
+            assert int(m.group(1)) <= int(m.group(2)), f"部分编号越界: {c.position}"
+    multi = [c for c in chunks if c.part_total > 1]
+    print(f"  [OK] 长章不产空壳块（{len(chunks)} 块，{len(multi)} 个多部分块）")
+
+
+def test_spoiler_default_genre_guard():
+    """推理/悬疑题材在没有风格卡时也必须自动走防泄底（blur）。"""
+    from bookreview.core.prompts import render_spoiler_rule
+
+    # 没有任何风格卡，但题材是推理 → 自动 blur
+    assert "防泄底" in render_spoiler_rule(None, "社会派推理长篇"), "推理题材未自动启用防泄底"
+    # 非推理题材不触发
+    assert "防泄底" not in render_spoiler_rule(None, "散文随笔集")
+    # 作者显式选了 full，不被兜底推翻
+    full = render_spoiler_rule({"spoiler_policy": "full"}, "本格推理")
+    assert "充分展开剧情" in full and "防泄底" not in full, "兜底覆盖了作者的显式选择"
+    # 风格卡里按题材的显式规则优先级最高
+    strict = render_spoiler_rule(
+        {"spoiler_policy": "full",
+         "spoiler_policy_by_genre": [{"keywords": ["推理"], "policy": "none"}]},
+        "本格推理")
+    assert "严格不剧透" in strict, "按题材的显式规则未生效"
+    print("  [OK] 推理题材兜底 blur / 显式策略不被覆盖")
+
+
+def test_profile_type_hardening():
+    """手写/改坏的画像字段类型不能把渲染层带崩，也不能逐字符拼接。"""
+    from bookreview.core.prompts import render_style_block, render_spoiler_rule
+    from bookreview.core.models import normalize_style_profile
+
+    broken = {
+        "structure": "开篇给态度 → 用细节论证 → 指出短板",   # 本该是 list
+        "signature_phrases": "说实话、没想到",                # 本该是 list
+        "spoiler_blur_notes": "别点名真凶",                   # 本该是 list
+        "spoiler_policy_by_genre": {"keywords": "推理", "policy": "blur"},  # 本该是 list[dict]
+        "tone": "真诚犀利",                                    # 本该是 dict
+        "vocabulary": {"preferred_words": "克制、锋利"},
+    }
+    block = render_style_block(broken)
+    assert "说实话" in block and "没想到" in block
+    assert "说、实、话" not in block, "字符串被逐字符拼接了"
+    assert "开 → 篇" not in block, "structure 字符串被逐字符拼接了"
+    assert "开篇给态度 → 用细节论证 → 指出短板" in block
+
+    rule = render_spoiler_rule(broken, "本格推理")
+    assert "别点名真凶" in rule, "blur 补充要求丢失"
+
+    # 完全非法的输入不崩
+    assert normalize_style_profile("不是字典") == {}
+    assert normalize_style_profile(None) == {}
+    assert isinstance(render_style_block({"tone": 5, "structure": None}), str)
+    print("  [OK] 画像字段类型错乱时渲染正常")
+
+
+def test_epub_spine_order():
+    """EPUB 必须按 spine 阅读顺序抽取；且不能把 discover/canvas 当封面目录丢掉。"""
+    from ebooklib import epub as eplib
+
+    from bookreview.core.parsers.epub_parser import EpubParser, _is_boilerplate
+
+    # 子串匹配回归：discover 含 cover、canvas 含 nav
+    assert not _is_boilerplate("OEBPS/Text/discover.xhtml")
+    assert not _is_boilerplate("OEBPS/Text/canvas.xhtml")
+    assert _is_boilerplate("OEBPS/cover.xhtml")
+    assert _is_boilerplate("OEBPS/Text/nav.xhtml")
+    assert _is_boilerplate("toc.xhtml")
+
+    book = eplib.EpubBook()
+    book.set_identifier("spine-order-test")
+    book.set_title("顺序测试")
+    book.set_language("zh")
+    items = {}
+    for name in ("a", "b", "c"):
+        ch = eplib.EpubHtml(title=name, file_name=f"{name}.xhtml", lang="zh")
+        ch.content = (f"<html><body><h1>{name}</h1><p>"
+                      + f"这是{name}章的正文。" * 30 + "</p></body></html>")
+        book.add_item(ch)
+        items[name] = ch
+    book.toc = tuple(items.values())
+    # 故意让 spine 顺序 (c,a,b) 与 manifest 顺序 (a,b,c) 不同
+    book.spine = [items["c"].id, items["a"].id, items["b"].id]
+    book.add_item(eplib.EpubNcx())
+    book.add_item(eplib.EpubNav())
+
+    path = TEST_DATA_DIR / "spine_order.epub"
+    eplib.write_epub(str(path), book, {})
+
+    parsed = EpubParser().parse(path)
+    order = [c.title for c in parsed.chapters]
+    assert order[:3] == ["c", "a", "b"], f"未按 spine 顺序解析: {order}"
+    print(f"  [OK] 按 spine 顺序解析：{order}")
+
+
 def main():
     tests = [
         test_parse_and_chunk,
@@ -366,6 +508,12 @@ def main():
         test_detect_self_name,
         test_style_words_vs_content_words,
         test_prompt_quality_guards,
+        test_sanitizer_instruction_line_shift,
+        test_sanitizer_rating_line_not_truncated,
+        test_chunker_no_overlap_shell,
+        test_spoiler_default_genre_guard,
+        test_profile_type_hardening,
+        test_epub_spine_order,
     ]
     failed = 0
     for t in tests:

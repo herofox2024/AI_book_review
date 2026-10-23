@@ -1,5 +1,8 @@
 """GUI 冒烟测试：离屏创建所有页面并切换，捕获导入与构造错误。
 
+既是 pytest 用例（`test_gui_smoke`），也能直接跑：
+    python bookreview/tests/test_gui_smoke.py
+
 不真正弹出窗口，用 QApplication + 离屏渲染验证代码可跑通。
 """
 
@@ -10,21 +13,36 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 TEST_DATA_DIR = Path(tempfile.mkdtemp(prefix="bookreview_gui_test_"))
 os.environ["BOOKREVIEW_DATA_DIR"] = str(TEST_DATA_DIR)
 
+SAMPLE_EPUB = Path(__file__).parent / "sample_books" / "薄冰之沼.epub"
 
-def main() -> int:
+_app = None
+
+
+def _get_app():
+    """整个进程只能有一个 QApplication，重复创建会直接 abort。"""
+    global _app
     from PySide6.QtWidgets import QApplication
+
+    if _app is None:
+        _app = QApplication.instance() or QApplication(sys.argv[:1])
+        from bookreview.ui.theme import QSS
+
+        _app.setStyleSheet(QSS)
+    return _app
+
+
+def test_gui_smoke() -> None:
+    app = _get_app()
 
     from bookreview.core.pipeline import Pipeline
     from bookreview.ui.main_window import MainWindow
-    from bookreview.ui.theme import QSS
-
-    app = QApplication(sys.argv)
-    app.setStyleSheet(QSS)
+    from bookreview.ui.pages import generate_page
 
     pipe = Pipeline()
     pipe.db.save_profile(
@@ -34,43 +52,39 @@ def main() -> int:
     )
     win = MainWindow(pipe)
     win.show()
+    try:
+        # 1) 四个页面都能切换，且 stack 跟着走
+        for i in range(win.nav_list.count()):
+            win.nav_list.setCurrentRow(i)
+            app.processEvents()
+            assert win.stack.currentIndex() == i, f"切换到页面 {i} 失败"
 
-    ok = []
+        # 2) 风格卡列表非空
+        assert win.page_style.cmb.count() > 0, "风格卡列表为空"
 
-    # 1) 四个页面都能切换
-    for i in range(win.nav_list.count()):
-        win.nav_list.setCurrentRow(i)
+        # 3) 生成页选项齐全
+        assert win.page_gen.cmb_length.count() == 3, "长度档数量不对"
+        assert win.page_gen.cmb_focus.count() == 5, "侧重数量不对"
+
+        # 4) 设置页载入当前配置
+        assert win.page_set.ed_base.text(), "Base URL 未载入"
+
+        # 5) 拖放与文件过滤器（回归：acceptDrops 没开时拖放完全失效）
+        assert win.page_gen.acceptDrops(), "生成页未开启 acceptDrops，拖放会失效"
+        assert ".txt" not in generate_page.FILE_FILTER, "文件过滤器列了解析器不支持的格式"
+
+        # 6) 解析一本真书（不发请求），联动启用理解卡按钮
+        book = pipe.parse(SAMPLE_EPUB)
+        win.page_gen._on_parsed(book)
         app.processEvents()
-        ok.append(f"页面 {i} ({win.nav_list.item(i).text()}) 可打开")
+        assert win.page_gen.btn_digest.isEnabled(), "解析后未启用理解卡按钮"
+    finally:
+        win.close()
 
-    # 2) 风格卡列表非空
-    n_style = win.page_style.cmb.count()
-    assert n_style > 0, "风格卡列表为空"
-    ok.append(f"风格卡列表 {n_style} 条")
 
-    # 3) 书评库有数据
-    n_rev = win.page_lib.table.rowCount()
-    ok.append(f"书评库 {n_rev} 条")
-
-    # 4) 生成页选项齐全
-    assert win.page_gen.cmb_length.count() == 3, "长度档数量不对"
-    assert win.page_gen.cmb_focus.count() == 5, "侧重数量不对"
-    ok.append("生成页：3 档长度 / 5 种侧重")
-
-    # 5) 设置页载入当前配置
-    assert win.page_set.ed_base.text(), "Base URL 未载入"
-    ok.append(f"设置页已载入：{win.page_set.ed_base.text()}")
-
-    # 6) 解析一本真书（不发请求）
-    book = pipe.parse("bookreview/tests/sample_books/薄冰之沼.epub")
-    win.page_gen._on_parsed(book)
-    app.processEvents()
-    assert win.page_gen.btn_digest.isEnabled(), "解析后未启用理解卡按钮"
-    ok.append(f"解析联动正常：{book.summary_line()}")
-
-    for line in ok:
-        print("  [OK]", line)
-    print(f"\nGUI 冒烟测试通过（{len(ok)} 项）")
+def main() -> int:
+    test_gui_smoke()
+    print("GUI 冒烟测试通过（6 项）")
     return 0
 
 

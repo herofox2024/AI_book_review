@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .core.config import PRESETS, load_settings
+from .core.models import normalize_style_profile
 from .core.pipeline import Pipeline
 from .core.prompts import FOCUS_PRESETS, LENGTH_PRESETS
 
@@ -87,7 +88,12 @@ def cmd_style(args, pipe: Pipeline) -> int:
 
 def cmd_import_profile(args, pipe: Pipeline) -> int:
     import json
-    data = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    raw = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        print(f"错误: {args.file} 顶层不是对象，不是一张风格卡", file=sys.stderr)
+        return 1
+    # 手写/导出过的 JSON 字段类型可能不对，入库前先归一化
+    data = normalize_style_profile(raw)
     name = args.name or data.get("name") or Path(args.file).stem
 
     # 没指定 id 时，若已存在同名卡片则覆盖它，避免列表越堆越长

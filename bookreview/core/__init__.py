@@ -1,7 +1,7 @@
 """核心层：配置、解析、摘要、风格、生成。"""
 
 from .config import Settings, load_settings, PRESETS, PROJECT_ROOT, CONFIG_PATH
-from .models import Book, Chapter, BookDigest
+from .models import Book, Chapter, BookDigest, normalize_style_profile
 from .llm import LLMClient, LLMError
 from .db import DB
 from .chunker import chunk_book, Chunk
@@ -12,7 +12,7 @@ from .prompts import LENGTH_PRESETS, FOCUS_PRESETS
 
 __all__ = [
     "Settings", "load_settings", "PRESETS", "PROJECT_ROOT", "CONFIG_PATH",
-    "Book", "Chapter", "BookDigest",
+    "Book", "Chapter", "BookDigest", "normalize_style_profile",
     "LLMClient", "LLMError", "DB",
     "chunk_book", "Chunk", "DigestBuilder",
     "StyleAnalyzer", "compute_stats", "load_samples_from_paths",

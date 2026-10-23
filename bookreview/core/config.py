@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -33,7 +34,27 @@ PRESETS: dict[str, dict[str, str]] = {
 }
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = PROJECT_ROOT / "config.json"
+
+
+def _config_path() -> Path:
+    """配置文件落盘位置。
+
+    打包成 exe 后 PROJECT_ROOT 指向 PyInstaller 每次启动都重建的解包目录，
+    写在那里的配置退出即被删除（表现为 API Key 每次启动都要重填）。
+    因此冻结环境下改写到 %APPDATA%\\bookreview\\config.json，
+    与 resolve_data_dir() 对冻结环境的处理保持一致。
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(os.environ.get("APPDATA") or Path.home()) / "bookreview"
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError:      # 目录不可写时退回程序目录，至少不炸在导入期
+            return PROJECT_ROOT / "config.json"
+        return base / "config.json"
+    return PROJECT_ROOT / "config.json"
+
+
+CONFIG_PATH = _config_path()
 
 
 @dataclass
@@ -130,7 +151,7 @@ class Settings:
         if not d.is_absolute():
             # 打包后 exe 目录只读，优先使用用户目录
             user_dir = Path(os.environ.get("APPDATA", PROJECT_ROOT)) / "bookreview"
-            if getattr(__import__("sys"), "frozen", False):
+            if getattr(sys, "frozen", False):
                 d = user_dir
             else:
                 d = PROJECT_ROOT / d

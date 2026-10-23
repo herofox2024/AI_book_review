@@ -30,8 +30,7 @@ AI_START_MARKERS = [
     r"^\s*(这是我|以下是|下面是|上面是)\s*(润色|改写|修改|优化|调整|重写|洗稿)后?的?\s*(版本|内容|文章|文本|稿子)?",
     # 「修改版：」「润色版：」「改写版：」——AI 产出的成稿
     r"^\s*\**\s*(修改|润色|改写|优化|重写|洗稿|调整|精修)[后的]*\s*(版本|版|稿|文本|内容|文章)?\s*\**\s*[:：，,]",
-    # 「公众号：」「小红书格式：」——投放渠道版本，基本都是 AI 改写
-    r"^\s*\**\s*(公众号|小红书|知乎|豆瓣|微博|简书|今日头条|视频号)\s*(格式|版|文案|版本|风格)?\s*\**\s*[:：]",
+    # 「公众号：」「小红书格式：」这类渠道版本行单独处理，见下面的 CHANNEL_* 。
     r"^\s*\**\s*改写为?\s*(小红书|公众号|知乎|豆瓣)?\s*格式?\s*\**\s*[:：]",
     r"^\s*\**\s*(改写|润色|修改)\s*说明\s*\**\s*[:：]",
 ]
@@ -76,7 +75,29 @@ RE_CTA = re.compile(
 RE_HEADING = re.compile(r"^\s*#{3,4}\s+\S", re.MULTILINE)
 RE_BOLD = re.compile(r"\*\*[^*\n]{2,40}\*\*")
 
-_COMPILED_MARKERS = [re.compile(p) for p in AI_START_MARKERS]
+# 投放渠道名：命中即说明「以下是发到某平台的改写版」，后面全部丢弃。
+#
+# 但不能一刀切：中文书评里「豆瓣：8.7 分」「知乎：这个问题吵得很凶」是很常见的
+# 评分/引用句，若按渠道标记截断，会把它之后的整篇原文当 AI 产出丢掉。
+# 因此分两档：
+#   - CHANNEL_ALWAYS：公众号/小红书/视频号/今日头条，几乎不会出现在本人正文句首；
+#   - CHANNEL_WITH_SUFFIX：豆瓣/知乎/微博/简书，仅在紧跟「格式/版/文案/版本/风格」时才算。
+CHANNEL_ALWAYS = ("公众号", "小红书", "视频号", "今日头条")
+CHANNEL_WITH_SUFFIX = ("豆瓣", "知乎", "微博", "简书")
+
+_RE_CHANNEL_ALWAYS = re.compile(
+    r"^\s*\**\s*(?:" + "|".join(CHANNEL_ALWAYS) + r")\s*"
+    r"(?:格式|版|文案|版本|风格)?\s*\**\s*[:：]"
+)
+_RE_CHANNEL_WITH_SUFFIX = re.compile(
+    r"^\s*\**\s*(?:" + "|".join(CHANNEL_WITH_SUFFIX) + r")\s*"
+    r"(?:格式|版|文案|版本|风格)\s*\**\s*[:：]"
+)
+
+_COMPILED_MARKERS = (
+    [re.compile(p) for p in AI_START_MARKERS]
+    + [_RE_CHANNEL_ALWAYS, _RE_CHANNEL_WITH_SUFFIX]
+)
 _COMPILED_INSTR = [re.compile(p) for p in INSTRUCTION_LINE_MARKERS]
 
 
@@ -93,8 +114,6 @@ def sanitize(text: str, verbose: bool = False) -> tuple[str, list[str]]:
     cut = len(lines)
     drop: set[int] = set()
     for i, line in enumerate(lines):
-        if i >= cut:
-            break
         if len(line) < 120 and any(p.match(line) for p in _COMPILED_INSTR):
             prior = len("".join(lines[:i]).strip())
             if prior >= INSTRUCTION_TRUNCATE_THRESHOLD:
@@ -105,12 +124,14 @@ def sanitize(text: str, verbose: bool = False) -> tuple[str, list[str]]:
             drop.add(i)
             notes.append(f"剔除指令行（后接原文）：{line.strip()[:30]}")
             continue
-        for pat in _COMPILED_MARKERS:
-            if pat.match(line):
-                cut = i
-                notes.append(f"第{i+1}行起判定为 AI 内容并截断：{line.strip()[:30]}")
-                break
-    lines = lines[:cut]
+        if any(p.match(line) for p in _COMPILED_MARKERS):
+            cut = i
+            notes.append(f"第{i+1}行起判定为 AI 内容并截断：{line.strip()[:30]}")
+            break
+
+    # 先在同一套下标坐标系里完成「按行剔除 + 截断」，再回头处理首行指令。
+    # 顺序颠倒会让 drop 里的下标整体偏移，误删本该保留的原文。
+    lines = [ln for i, ln in enumerate(lines[:cut]) if i not in drop]
 
     # 2) 剔除指令型首行
     if lines and INSTRUCTION_PATTERN.match(lines[0]) and len(lines[0]) < 60:
@@ -119,10 +140,8 @@ def sanitize(text: str, verbose: bool = False) -> tuple[str, list[str]]:
 
     # 3) 逐行清理
     kept: list[str] = []
-    for idx, line in enumerate(lines):
+    for line in lines:
         stripped = line.strip()
-        if idx in drop:
-            continue
         if not stripped:
             kept.append("")
             continue

@@ -1,4 +1,4 @@
-﻿name: Build and Release
+name: Build and Release
 
 on:
   push:
@@ -46,7 +46,7 @@ jobs:
 
       - name: Run tests
         shell: pwsh
-        run: python -m pytest bookreview/tests/test_pipeline_mock.py -q
+        run: python -m pytest bookreview/tests -q
 
       - name: Build executable
         shell: pwsh

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from ...core.models import normalize_style_profile
 from ...core.pipeline import Pipeline
 from ..workers import StyleLearnWorker
 from ..parameter_help import ParameterHelp
@@ -206,6 +207,8 @@ class StylePage(QWidget):
         except json.JSONDecodeError as e:
             QMessageBox.warning(self, "JSON 有误", f"先修正 JSON 再覆盖：{e}")
             return
+        # 手改过的 JSON 字段类型可能不对（比如 persona 写成字符串），先归一化
+        data = normalize_style_profile(data)
         data["name"] = self.ed_name.text().strip() or data.get("name", "我的风格")
         data.setdefault("persona", {})
         data["persona"]["self_name"] = self.ed_self.text().strip()
@@ -226,6 +229,7 @@ class StylePage(QWidget):
         except json.JSONDecodeError as e:
             QMessageBox.warning(self, "JSON 有误", str(e))
             return
+        data = normalize_style_profile(data)
         self.pipe.db.save_profile(
             data.get("name") or "我的风格", data,
             data.get("_stats", {}).get("sample_count", 0), pid,
@@ -268,6 +272,10 @@ class StylePage(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "导入失败", str(e))
             return
+        if not isinstance(data, dict):
+            QMessageBox.warning(self, "导入失败", "这个 JSON 不是一张风格卡（顶层应为对象）")
+            return
+        data = normalize_style_profile(data)
         name = data.get("name") or Path(path).stem
         pid = self.pipe.db.save_profile(name, data, data.get("_stats", {}).get("sample_count", 0))
         self.reload()

@@ -34,11 +34,16 @@ def chunk_book(book: Book, chunk_size: int = 6000, chunk_overlap: int = 300) -> 
     buf: list[str] = []
     buf_chapters: list[str] = []
     buf_size = 0
+    buf_has_new = False   # 缓冲区里除上一块的重叠尾巴外，是否还有新内容
     idx = 0
 
     def flush() -> None:
-        nonlocal buf, buf_chapters, buf_size, idx
+        nonlocal buf, buf_chapters, buf_size, buf_has_new, idx
         if not buf:
+            return
+        if not buf_has_new:
+            # 只剩上一块的重叠尾巴：不产出新块，等真正的新内容进来一并送出。
+            # 否则会产出一块 chapter/position 为空、内容纯重复的"空壳块"。
             return
         text = "\n\n".join(buf)
         idx += 1
@@ -52,6 +57,7 @@ def chunk_book(book: Book, chunk_size: int = 6000, chunk_overlap: int = 300) -> 
         )
         tail = text[-chunk_overlap:] if chunk_overlap > 0 and len(text) > chunk_overlap else ""
         buf, buf_chapters, buf_size = ([tail] if tail else []), [], len(tail)
+        buf_has_new = False
 
     for ch in book.chapters:
         if len(ch.text) <= chunk_size:
@@ -60,45 +66,48 @@ def chunk_book(book: Book, chunk_size: int = 6000, chunk_overlap: int = 300) -> 
             buf.append(ch.text)
             buf_chapters.append(ch.title or f"第{ch.index}节")
             buf_size += len(ch.text)
+            buf_has_new = True
         else:
-            # 超长章节：按段落切
+            # 超长章节：先送走已积累的块，把它留下的重叠尾巴接到本章第一段之前
             flush()
+            carried = "\n\n".join(buf)
+            buf, buf_chapters, buf_size, buf_has_new = [], [], 0, False
+
             paras = [p for p in ch.text.split("\n") if p.strip()]
-            sub: list[str] = []
-            sub_size = 0
-            part = 1
-            total = max(1, (len(ch.text) + chunk_size - 1) // chunk_size)
+            parts: list[str] = []
+            sub: list[str] = [carried] if carried else []
+            sub_size = len(carried)
+            pending_new = False          # 当前 sub 里是否有尚未产出过的新段落
             for p in paras:
                 sub.append(p)
                 sub_size += len(p)
+                pending_new = True
                 if sub_size >= chunk_size:
-                    idx += 1
-                    chunks.append(
-                        Chunk(
-                            index=idx,
-                            chapter=ch.title,
-                            position=f"{ch.title}（第{part}/{total}部分）" if ch.title
-                            else f"第{part}/{total}部分",
-                            text="\n".join(sub),
-                            part=part,
-                            part_total=total,
-                        )
-                    )
+                    parts.append("\n".join(sub))
                     tail_p = "\n".join(sub)[-chunk_overlap:] if chunk_overlap > 0 else ""
                     sub = [tail_p] if tail_p else []
                     sub_size = len(tail_p)
-                    part += 1
-            if sub and "".join(sub).strip():
+                    pending_new = False
+            # 收尾：残留内容里确有新段落才补最后一块，避免追加一块纯重叠内容
+            if pending_new and sub and "".join(sub).strip():
+                parts.append("\n".join(sub))
+
+            total_parts = len(parts)
+            for k, text in enumerate(parts, 1):
                 idx += 1
+                if total_parts > 1:
+                    position = (f"{ch.title}（第{k}/{total_parts}部分）" if ch.title
+                                else f"第{k}/{total_parts}部分")
+                else:
+                    position = ch.title or ""
                 chunks.append(
                     Chunk(
                         index=idx,
                         chapter=ch.title,
-                        position=f"{ch.title}（第{part}/{total}部分）" if ch.title
-                        else f"第{part}/{total}部分",
-                        text="\n".join(sub),
-                        part=part,
-                        part_total=total,
+                        position=position,
+                        text=text,
+                        part=k,
+                        part_total=max(1, total_parts),
                     )
                 )
     flush()

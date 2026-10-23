@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from .llm import LLMClient
+from .models import normalize_style_profile
 from .prompts import (
     STYLE_ANALYSIS_SYSTEM,
     STYLE_ANALYSIS_USER,
@@ -180,8 +181,10 @@ class StyleAnalyzer:
         if hint:
             user += f"\n\n【作者对自身风格的补充描述】\n{hint}"
 
-        profile = self.llm.chat_json(
-            STYLE_ANALYSIS_SYSTEM, user, temperature=0.3, max_tokens=2500
+        profile = normalize_style_profile(
+            self.llm.chat_json(
+                STYLE_ANALYSIS_SYSTEM, user, temperature=0.3, max_tokens=2500
+            )
         )
 
         # 用统计结果校正/补全 LLM 可能给错的数值字段
