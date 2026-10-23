@@ -463,6 +463,15 @@ QLabel#sidebarFooter {
     color: $text_sub;
     padding: 0 6px;
 }
+QLabel#badge {
+    background: $accent_soft;
+    color: $accent;
+    border: none;
+    border-radius: 9px;
+    padding: 1px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
 
 /* ---------- 文本角色 ---------- */
 QLabel#muted { color: $text_mute; }

@@ -3,6 +3,11 @@
 毛玻璃用系统亚克力提供，离屏渲染拿不到 DWM 合成结果，
 所以这里把 glass.apply 打桩成成功，再把窗口贴到一张模拟壁纸上，
 比直接看透明 PNG 更接近真实观感。
+
+重要：一次进程只渲染一张图。
+在同一个 QApplication 内反复创建 MainWindow 并不会释放旧窗口
+（Qt 的窗口在 close() 后仍然存活，全局样式表又会遍历所有已存在控件），
+实测第 4 轮构建耗时从 2s 涨到 27s。所以外部按 (主题, 页面) 逐次调用本脚本。
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ DATA = Path(_preset) if _preset else Path(tempfile.mkdtemp(prefix="ui_preview_")
 os.environ["BOOKREVIEW_DATA_DIR"] = str(DATA)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPointF, QRectF, Qt  # noqa: E402
+from PySide6.QtCore import QPointF, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QColor, QImage, QLinearGradient, QPainter, QRadialGradient,
 )
@@ -41,6 +46,8 @@ from bookreview.core.pipeline import Pipeline  # noqa: E402
 from bookreview.ui.main_window import MainWindow  # noqa: E402
 
 OUT = Path(os.environ.get("PREVIEW_OUT", "").strip() or (ROOT / "outputs"))
+
+PAGES = {0: "generate", 1: "library", 2: "style", 3: "settings"}
 
 
 def seed(pipe: Pipeline) -> None:
@@ -98,44 +105,47 @@ def wallpaper(width: int, height: int) -> QImage:
     return img
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
+def render_one(theme_key: str, page: int, out_dir: Path,
+               width: int = 1120, height: int = 740) -> Path:
+    """渲染单张效果图并返回路径。调用方负责本进程只调用一次。"""
+    app = QApplication.instance() or QApplication(sys.argv)
     pipe = Pipeline()
     seed(pipe)
 
-    OUT.mkdir(exist_ok=True)
-    width, height = 1120, 740
-
-    # (主题, 页面索引)  页面 0=生成书评  3=设置
-    combos = [
-        ("crystal", 0), ("crystal", 3),
-        ("system", 0), ("system", 3),
-        ("dark", 0), ("dark", 3),
-    ]
-
-    for key, page in combos:
-        win = MainWindow(pipe)
-        win.resize(width, height)
-        win.apply_theme(key)
-        win.show()
-        win.nav_list.setCurrentRow(page)
+    win = MainWindow(pipe)
+    win.resize(width, height)
+    win.apply_theme(theme_key)
+    win.show()
+    win.nav_list.setCurrentRow(page)
+    app.processEvents()
+    for _ in range(4):
         app.processEvents()
-        for _ in range(4):
-            app.processEvents()
 
-        shot = win.grab().toImage()
-        canvas = wallpaper(width + 160, height + 160)
-        p = QPainter(canvas)
-        p.drawImage(80, 80, shot)
-        p.end()
+    shot = win.grab().toImage()
+    canvas = wallpaper(width + 160, height + 160)
+    p = QPainter(canvas)
+    p.drawImage(80, 80, shot)
+    p.end()
 
-        suffix = "settings" if page == 3 else "generate"
-        path = OUT / f"preview_{key}_{suffix}.png"
-        ok = canvas.save(str(path))
-        print(f"{'saved' if ok else 'FAILED'} {path.name}  theme={key}  page={suffix}")
-        win.close()
-
+    out_dir.mkdir(parents=True, exist_ok=True)
+    suffix = PAGES.get(page, "generate")
+    path = out_dir / f"preview_{theme_key}_{suffix}.png"
+    path.unlink(missing_ok=True)
+    ok = canvas.save(str(path))
     pipe.close()
+    if not ok:
+        raise RuntimeError(f"保存失败: {path}")
+    return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = argv if argv is not None else sys.argv[1:]
+    if len(argv) >= 2:
+        theme_key, page = argv[0], int(argv[1])
+    else:
+        theme_key, page = "crystal", 0
+    path = render_one(theme_key, page, OUT)
+    print(f"saved {path.name}  theme={theme_key}  page={PAGES.get(page)}")
     return 0
 
 

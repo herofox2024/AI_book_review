@@ -36,6 +36,9 @@ config.json
 cache.json
 *.log
 
+# Theme preview screenshots (design reference only, regenerate via tools/render_themes.py)
+/ui_preview/
+
 # User-specific writing data
 /style_presets/*.json
 glossary.json

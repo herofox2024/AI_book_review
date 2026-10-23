@@ -11,9 +11,21 @@ class ParameterHelp(QObject):
         super().__init__(page)
         self.page = page
         self.popup: QLabel | None = None
-        app = QApplication.instance()
-        if app:
-            app.installEventFilter(self)
+        self._app = QApplication.instance()
+        # 过滤器挂在全局 QApplication 上，不摘掉会随页面不断累积
+        # （每个新窗口都多一个，事件分发变成平方级，窗口越开越慢）。
+        if self._app:
+            self._app.installEventFilter(self)
+            self.page.destroyed.connect(self._detach)
+
+    def _detach(self, *_args) -> None:
+        app = self._app
+        if app is not None:
+            try:
+                app.removeEventFilter(self)
+            except Exception:
+                pass
+        self._app = None
 
     def label(self, title: str, text: str) -> QWidget:
         host = QWidget()

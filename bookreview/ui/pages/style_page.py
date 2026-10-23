@@ -14,8 +14,9 @@ from PySide6.QtWidgets import (
 
 from ...core.models import normalize_style_profile
 from ...core.pipeline import Pipeline
-from ..workers import StyleLearnWorker
 from ..parameter_help import ParameterHelp
+from ..widgets import SettingRow
+from ..workers import StyleLearnWorker
 
 SPOILER_LABEL = {
     "blur": "blur — 推理/悬疑防泄底（模糊化诡计与真相）",
@@ -42,106 +43,174 @@ class StylePage(QWidget):
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(12)
 
+        # --- 标题行 ---
         head = QHBoxLayout()
+        head.setSpacing(8)
         t = QLabel("风格画像")
         t.setObjectName("title")
         head.addWidget(t)
+        self.lbl_badge = QLabel("0")
+        self.lbl_badge.setObjectName("badge")
+        head.addWidget(self.lbl_badge)
         head.addStretch(1)
+
         btn_learn = QPushButton("从样本学习…")
+        btn_learn.setObjectName("primary")
         btn_learn.clicked.connect(self._learn)
         btn_import = QPushButton("导入 JSON")
         btn_import.clicked.connect(self._import)
-        btn_del = QPushButton("删除")
-        btn_del.setObjectName("danger")
-        btn_del.clicked.connect(self._delete)
         btn_cleanup = QPushButton("清理重复")
         btn_cleanup.setToolTip("同名或带版本后缀的风格卡只保留最新一张")
         btn_cleanup.clicked.connect(self._cleanup_duplicates)
-        head.addWidget(btn_learn)
-        head.addWidget(btn_import)
         head.addWidget(btn_cleanup)
-        head.addWidget(btn_del)
+        head.addWidget(btn_import)
+        head.addWidget(btn_learn)
         root.addLayout(head)
 
         split = QSplitter(Qt.Horizontal)
+        split.setHandleWidth(12)
+        split.setChildrenCollapsible(False)
 
-        # 左：列表
+        # --- 左：选择 + 摘要 ---
         left = QFrame()
         left.setObjectName("card")
+        left.setMinimumWidth(230)
+        left.setMaximumWidth(300)
         llay = QVBoxLayout(left)
-        llay.setContentsMargins(10, 10, 10, 10)
+        llay.setContentsMargins(14, 12, 14, 12)
+        llay.setSpacing(8)
+
+        lbl_pick = QLabel("已保存的风格卡")
+        lbl_pick.setObjectName("sectionTitle")
+        llay.addWidget(lbl_pick)
+
         self.cmb = QComboBox()
         self.cmb.currentIndexChanged.connect(self._on_pick)
-        llay.addWidget(QLabel("已保存的风格卡"))
         llay.addWidget(self.cmb)
+
         self.lbl_info = QLabel("")
-        self.lbl_info.setObjectName("sub")
+        self.lbl_info.setObjectName("rowHint")
         self.lbl_info.setWordWrap(True)
         llay.addWidget(self.lbl_info)
         llay.addStretch(1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_export = QPushButton("导出")
+        btn_export.clicked.connect(self._export)
+        btn_del = QPushButton("删除")
+        btn_del.setObjectName("danger")
+        btn_del.clicked.connect(self._delete)
+        btn_row.addWidget(btn_export)
+        btn_row.addWidget(btn_del)
+        llay.addLayout(btn_row)
         split.addWidget(left)
 
-        # 右：编辑
+        # --- 右：编辑 ---
         right = QFrame()
         right.setObjectName("card")
         rlay = QVBoxLayout(right)
-        rlay.setContentsMargins(14, 12, 14, 12)
-        rlay.setSpacing(10)
+        rlay.setContentsMargins(0, 0, 0, 0)
+        rlay.setSpacing(0)
 
-        form = QFormLayout()
-        form.setSpacing(8)
+        # 基本字段：一行一项
+        basic = QVBoxLayout()
+        basic.setContentsMargins(0, 0, 0, 0)
+        basic.setSpacing(0)
+
         self.ed_name = QLineEdit()
         self.ed_self = QLineEdit()
         self.ed_self.setPlaceholderText("如：非帅（留空则不用自称）")
         self.ed_identity = QLineEdit()
         self.ed_identity.setPlaceholderText("如：本格推理爱好者，追系列作品")
+        for w in (self.ed_name, self.ed_self, self.ed_identity):
+            w.setFixedWidth(260)
+
         self.cmb_spoiler = QComboBox()
+        self.cmb_spoiler.setFixedWidth(260)
         for k, v in SPOILER_LABEL.items():
             self.cmb_spoiler.addItem(v, k)
-        form.addRow(self.help.label("名称", "风格卡在生成页中的显示名称。同名重新学习时会更新已有风格卡，不会创建重复卡。"), self.ed_name)
-        form.addRow(self.help.label("自称", "书评正文中对自己的固定称呼，例如“非帅”。留空时模型使用普通第一人称。"), self.ed_self)
-        form.addRow(self.help.label("人设", "写作者的身份和阅读立场，例如“本格推理爱好者”。它会影响评价角度和专业表达。"), self.ed_identity)
-        form.addRow(self.help.label("剧透策略", "blur：模糊关键诡计与真相；partial：可谈部分剧情但不点破核心反转；none：严格不剧透；full：允许充分展开剧情。"), self.cmb_spoiler)
-        rlay.addLayout(form)
 
-        # 语气滑块
-        tone_row = QHBoxLayout()
+        basic.addWidget(SettingRow(
+            "名称", self.ed_name,
+            help_text="风格卡在生成页中的显示名称。同名重新学习时会更新已有风格卡，不会创建重复卡。",
+            help_provider=self.help, dense=True, label_width=96,
+        ))
+        basic.addWidget(SettingRow(
+            "自称", self.ed_self, dense=True, label_width=96,
+            help_text="书评正文中对自己的固定称呼，例如“非帅”。留空时模型使用普通第一人称。",
+            help_provider=self.help,
+        ))
+        basic.addWidget(SettingRow(
+            "人设", self.ed_identity, dense=True, label_width=96,
+            help_text="写作者的身份和阅读立场，例如“本格推理爱好者”。它会影响评价角度和专业表达。",
+            help_provider=self.help,
+        ))
+        basic.addWidget(SettingRow(
+            "剧透策略", self.cmb_spoiler, dense=True, label_width=96, last=True,
+            help_text="blur：模糊关键诡计与真相；partial：可谈部分剧情但不点破核心反转；none：严格不剧透；full：允许充分展开剧情。",
+            help_provider=self.help,
+        ))
+        rlay.addLayout(basic)
+
+        # 语气滑块：三列
+        tone_host = QWidget()
+        tone_lay = QVBoxLayout(tone_host)
+        tone_lay.setContentsMargins(16, 10, 16, 10)
+        tone_lay.setSpacing(6)
+        lbl_tone = QLabel("语气倾向")
+        lbl_tone.setObjectName("sectionTitle")
+        tone_lay.addWidget(lbl_tone)
+        tone_wrap = QHBoxLayout()
+        tone_wrap.setSpacing(12)
         self.sp_form = self._slider("正式度", "0 更口语随意，1 更正式书面。数值只表示倾向，不是文章质量评分。")
         self.sp_emo = self._slider("情感浓度", "0 更克制冷静，1 情绪表达更强烈，会增加感叹、个人感受和态度表达。")
         self.sp_sharp = self._slider("批判锋利度", "0 更温和委婉，1 更直接尖锐。较高数值会更明确地指出作品短板。")
         for w in (self.sp_form, self.sp_emo, self.sp_sharp):
-            tone_row.addWidget(w)
-        rlay.addLayout(tone_row)
+            tone_wrap.addWidget(w, 1)
+        tone_lay.addLayout(tone_wrap)
+        rlay.addWidget(tone_host)
 
-        rlay.addWidget(QLabel("完整 JSON（可手动微调）"))
+        hairline = QFrame()
+        hairline.setObjectName("hairline")
+        hairline.setFixedHeight(1)
+        rlay.addWidget(hairline)
+
+        # 完整 JSON
+        json_host = QWidget()
+        jlay = QVBoxLayout(json_host)
+        jlay.setContentsMargins(16, 10, 16, 10)
+        jlay.setSpacing(6)
+        lbl_json = QLabel("完整 JSON（可手动微调）")
+        lbl_json.setObjectName("sectionTitle")
+        jlay.addWidget(lbl_json)
         self.ed_json = QPlainTextEdit()
         self.ed_json.setPlaceholderText("选中左侧风格卡后显示完整配置")
-        rlay.addWidget(self.ed_json, 1)
+        jlay.addWidget(self.ed_json, 1)
 
-        btn_row = QHBoxLayout()
+        btn_row2 = QHBoxLayout()
+        btn_row2.setSpacing(8)
         self.btn_apply = QPushButton("用面板覆盖 JSON")
         self.btn_apply.clicked.connect(self._apply_panel)
         btn_save = QPushButton("保存")
         btn_save.setObjectName("primary")
         btn_save.clicked.connect(self._save)
-        btn_export = QPushButton("导出 JSON")
-        btn_export.clicked.connect(self._export)
-        btn_row.addWidget(self.btn_apply)
-        btn_row.addStretch(1)
-        btn_row.addWidget(btn_export)
-        btn_row.addWidget(btn_save)
-        rlay.addLayout(btn_row)
+        btn_row2.addWidget(self.btn_apply)
+        btn_row2.addStretch(1)
+        btn_row2.addWidget(btn_save)
+        jlay.addLayout(btn_row2)
+        rlay.addWidget(json_host, 1)
 
         split.addWidget(right)
-        split.setStretchFactor(0, 2)
-        split.setStretchFactor(1, 5)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
         root.addWidget(split, 1)
 
     def _slider(self, label: str, help_text: str) -> QWidget:
         box = QWidget()
         lay = QVBoxLayout(box)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(2)
+        lay.setSpacing(3)
         lay.addWidget(self.help.label(label, help_text))
         sp = QDoubleSpinBox()
         sp.setRange(0.0, 1.0)
@@ -158,6 +227,7 @@ class StylePage(QWidget):
 
     def reload(self) -> None:
         self._profiles = [dict(r) for r in self.pipe.list_profiles()]
+        self.lbl_badge.setText(str(len(self._profiles)))
         self.cmb.blockSignals(True)
         self.cmb.clear()
         for p in self._profiles:
@@ -173,8 +243,10 @@ class StylePage(QWidget):
     def _on_pick(self) -> None:
         pid = self._current_id()
         if not pid:
-            self.lbl_info.setText("还没有风格卡")
+            self.lbl_info.setText("还没有风格卡，点右上角「从样本学习…」创建第一张。")
             self.ed_json.clear()
+            for w in (self.ed_name, self.ed_self, self.ed_identity):
+                w.clear()
             return
         prof = self.pipe.get_profile(pid) or {}
         persona = prof.get("persona") or {}
