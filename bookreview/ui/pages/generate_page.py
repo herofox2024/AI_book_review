@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QProgressBar, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from ...core.models import Book, BookDigest
@@ -17,6 +17,7 @@ from ...core.pipeline import Pipeline
 from ...core.prompts import FOCUS_PRESETS, LENGTH_PRESETS
 from ..workers import DigestWorker, GenerateWorker, ParseWorker
 from ..parameter_help import ParameterHelp
+from ..widgets import SettingCard, SettingRow
 
 # 只列出解析器真正支持的扩展名：列了 .txt/.md 却解析不了，
 # 用户选中后会直接撞上「不支持的格式」。
@@ -52,6 +53,17 @@ class GeneratePage(QWidget):
         title.setObjectName("title")
         root.addWidget(title)
 
+        # 控制区（选书 / 理解卡 / 输出设置）放滚动区：
+        # 窗口不高时宁可滚动，也不要把下拉框压扁。
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(12)
+
         # --- 选书 ---
         card = QFrame()
         card.setObjectName("card")
@@ -73,7 +85,7 @@ class GeneratePage(QWidget):
         self.lbl_book.setObjectName("muted")
         self.lbl_book.setWordWrap(True)
         lay.addWidget(self.lbl_book)
-        root.addWidget(card)
+        body_lay.addWidget(card)
 
         # --- 理解卡 ---
         dcard = QFrame()
@@ -109,40 +121,46 @@ class GeneratePage(QWidget):
             "理解卡是全书压缩后的产物（约 3000 字）。\n"
             "同一本书只会构建一次，之后直接命中缓存，不重复消耗 token。"
         )
-        self.txt_digest.setMinimumHeight(90)
-        self.txt_digest.setMaximumHeight(150)
+        self.txt_digest.setMinimumHeight(64)
+        self.txt_digest.setMaximumHeight(104)
         dlay.addWidget(self.txt_digest)
-        root.addWidget(dcard)
+        body_lay.addWidget(dcard)
+        body_lay.addStretch(1)
+        scroll.setWidget(body)
+        # 只让「选书 + 理解卡」这两张卡滚动；下面的选项、输出区始终可见。
+        # 滚动区多拿一些伸缩权重，默认尺寸下两张卡正好完整显示。
+        root.addWidget(scroll, 3)
 
-        # --- 选项 ---
-        ocard = QFrame()
-        ocard.setObjectName("card")
-        olay = QVBoxLayout(ocard)
-        olay.setContentsMargins(14, 12, 14, 12)
-        olay.setSpacing(10)
-
-        o_row = QHBoxLayout()
-        o_row.addWidget(self.help.label("风格画像", "选择从你的书评样本中学习得到的写作风格卡。它会控制自称、语气、句式、结构和剧透习惯；不选择则使用默认书评风格。"))
+        # --- 输出设置：一行一项，与设置页同一套版式 ---
         self.cmb_profile = QComboBox()
-        self.cmb_profile.setMinimumWidth(220)
-        o_row.addWidget(self.cmb_profile, 1)
-
-        o_row.addSpacing(12)
-        o_row.addWidget(self.help.label("长度", "短评：约 200-300 字，只讲核心判断。\n标准：约 800-1200 字，包含完整论证。\n深度长评：约 2000-3000 字，展开人物、结构和主题。"))
+        self.cmb_profile.setMinimumWidth(360)
         self.cmb_length = QComboBox()
+        self.cmb_length.setMinimumWidth(150)
         for k, v in LENGTH_PRESETS.items():
             self.cmb_length.addItem(v["label"], k)
         self.cmb_length.setCurrentIndex(1)
-        o_row.addWidget(self.cmb_length)
-
-        o_row.addSpacing(12)
-        o_row.addWidget(self.help.label("侧重", "综合：平衡情节、人物、文笔和主题。\n情节：重点分析结构、悬念和节奏。\n人物：重点分析动机和人物弧光。\n文笔：重点分析语言、意象和对话。\n主题：重点分析核心命题与现实呼应。"))
         self.cmb_focus = QComboBox()
+        self.cmb_focus.setMinimumWidth(280)
         for k, v in FOCUS_PRESETS.items():
             self.cmb_focus.addItem(v.split("，")[0], k)
-        o_row.addWidget(self.cmb_focus, 1)
-        olay.addLayout(o_row)
-        root.addWidget(ocard)
+
+        options = SettingCard()
+        options.add_row(SettingRow(
+            "风格画像", self.cmb_profile,
+            help_text="选择从你的书评样本中学习得到的写作风格卡。它会控制自称、语气、句式、结构和剧透习惯；不选择则使用默认书评风格。",
+            help_provider=self.help, dense=True,
+        ))
+        options.add_row(SettingRow(
+            "长度", self.cmb_length,
+            help_text="短评：约 200-300 字，只讲核心判断。\n标准：约 800-1200 字，包含完整论证。\n深度长评：约 2000-3000 字，展开人物、结构和主题。",
+            help_provider=self.help, dense=True,
+        ))
+        options.add_row(SettingRow(
+            "侧重", self.cmb_focus,
+            help_text="综合：平衡情节、人物、文笔和主题。\n情节：重点分析结构、悬念和节奏。\n人物：重点分析动机和人物弧光。\n文笔：重点分析语言、意象和对话。\n主题：重点分析核心命题与现实呼应。",
+            help_provider=self.help, dense=True, last=True,
+        ))
+        root.addWidget(options)
 
         # --- 生成 ---
         grow = QHBoxLayout()
@@ -161,26 +179,38 @@ class GeneratePage(QWidget):
         root.addLayout(grow)
 
         self.txt_out = QTextEdit()
+        self.txt_out.setMinimumHeight(110)
         self.txt_out.setPlaceholderText("生成的书评会出现在这里，边生成边显示。")
         root.addWidget(self.txt_out, 1)
 
+        # 运行日志默认收起：它只占地方，需要排查时再展开
         self.txt_log = QTextEdit()
         self.txt_log.setReadOnly(True)
-        self.txt_log.setMaximumHeight(110)
+        self.txt_log.setMaximumHeight(88)
         self.txt_log.setPlaceholderText("运行日志会显示在这里…")
+        self.txt_log.setVisible(False)
         root.addWidget(self.txt_log)
 
         erow = QHBoxLayout()
         self.lbl_count = QLabel("")
         self.lbl_count.setObjectName("muted")
+        self.btn_log = QPushButton("显示日志")
+        self.btn_log.setObjectName("link")
+        self.btn_log.setCheckable(True)
+        self.btn_log.toggled.connect(self._toggle_log)
         btn_copy = QPushButton("复制")
         btn_copy.clicked.connect(self._copy)
         btn_save = QPushButton("导出…")
         btn_save.clicked.connect(self._export)
+        erow.addWidget(self.btn_log, 0, Qt.AlignVCenter)
         erow.addWidget(self.lbl_count, 1)
         erow.addWidget(btn_copy)
         erow.addWidget(btn_save)
         root.addLayout(erow)
+
+    def _toggle_log(self, shown: bool) -> None:
+        self.txt_log.setVisible(shown)
+        self.btn_log.setText("隐藏日志" if shown else "显示日志")
 
     # ---------- 数据 ----------
     def _refresh_profiles(self) -> None:

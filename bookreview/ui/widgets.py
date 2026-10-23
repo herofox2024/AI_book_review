@@ -26,7 +26,7 @@ class SettingRow(QWidget):
     def __init__(self, title: str, control: QWidget, *, hint: str = "",
                  help_text: str = "", help_provider=None, last: bool = False,
                  align: str = "left", label_width: int = LABEL_WIDTH,
-                 parent: QWidget | None = None):
+                 dense: bool = False, parent: QWidget | None = None):
         super().__init__(parent)
         self._title = title
 
@@ -34,8 +34,9 @@ class SettingRow(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        pad_y = 8 if dense else 11
         content = QHBoxLayout()
-        content.setContentsMargins(16, 11, 16, 11)
+        content.setContentsMargins(16, pad_y, 16, pad_y)
         content.setSpacing(14)
 
         left = QVBoxLayout()

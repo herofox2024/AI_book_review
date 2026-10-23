@@ -33,8 +33,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.pipe = pipeline or Pipeline()
         self.setWindowTitle("个人风格书评生成器")
-        self.resize(1120, 740)
-        self.setMinimumSize(920, 600)
+        self.resize(1140, 800)
+        self.setMinimumSize(940, 660)
 
         self.theme: Theme = LIGHT
         self._glass_ok = False
