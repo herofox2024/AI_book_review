@@ -87,9 +87,16 @@ class PipelineSettings:
 
 
 @dataclass
+class UISettings:
+    # crystal = 透明水晶（Win11 亚克力毛玻璃）；system = 跟随系统深浅色；dark = 深色
+    theme: str = "crystal"
+
+
+@dataclass
 class Settings:
     llm: LLMSettings = field(default_factory=LLMSettings)
     pipeline: PipelineSettings = field(default_factory=PipelineSettings)
+    ui: UISettings = field(default_factory=UISettings)
     data_dir: str = "data"
 
     # ---------- 序列化 ----------
@@ -122,6 +129,10 @@ class Settings:
             for k, v in raw["pipeline"].items():
                 if hasattr(s.pipeline, k):
                     setattr(s.pipeline, k, v)
+        if "ui" in raw:
+            for k, v in (raw["ui"] or {}).items():
+                if hasattr(s.ui, k):
+                    setattr(s.ui, k, v)
         if "data_dir" in raw:
             s.data_dir = raw["data_dir"]
         env_key = os.environ.get("BOOKREVIEW_API_KEY", "").strip()

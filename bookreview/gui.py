@@ -13,13 +13,16 @@ def main() -> int:
         return 1
 
     # 用绝对导入：`python -m bookreview.gui` 时相对导入会越过顶层包
+    from bookreview.core.config import load_settings
     from bookreview.core.pipeline import Pipeline
     from bookreview.ui.main_window import MainWindow
-    from bookreview.ui.theme import QSS
+    from bookreview.ui.theme import build_qss, resolve_theme
 
     app = QApplication(sys.argv)
-    app.setStyleSheet(QSS)
-    win = MainWindow(Pipeline())
+    settings = load_settings()
+    # 先按保存的主题铺全局样式，避免首帧闪一下白底
+    app.setStyleSheet(build_qss(resolve_theme(settings.ui.theme)))
+    win = MainWindow(Pipeline(settings))
     win.show()
     return app.exec()
 

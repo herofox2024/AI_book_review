@@ -22,8 +22,9 @@ class ParameterHelp(QObject):
         layout.setSpacing(4)
         layout.addWidget(QLabel(title))
         button = QToolButton()
+        button.setObjectName("helpBadge")
         button.setText("?")
-        button.setFixedSize(20, 20)
+        button.setFixedSize(19, 19)
         button.setToolTip("点击查看说明")
         button.clicked.connect(lambda: self.show(button, text))
         layout.addWidget(button)
@@ -33,11 +34,9 @@ class ParameterHelp(QObject):
     def show(self, anchor: QWidget, text: str) -> None:
         self.close()
         popup = QLabel(text, self.page, Qt.ToolTip)
+        popup.setObjectName("helpPopup")
         popup.setWordWrap(True)
         popup.setMaximumWidth(380)
-        popup.setStyleSheet(
-            "background:#fffbe6; border:1px solid #d6b656; padding:8px; color:#222;"
-        )
         popup.adjustSize()
         popup.move(anchor.mapTo(self.page, anchor.rect().bottomRight()) + QPoint(6, 4))
         popup.show()
